@@ -1,4 +1,4 @@
-resource random_string "password" {
+resource "random_string" "password" {
   length      = 16
   special     = false
   min_lower   = 1
@@ -6,19 +6,20 @@ resource random_string "password" {
   min_upper   = 1
 }
 
-resource azurerm_linux_virtual_machine "linux_machine" {
+resource "azurerm_linux_virtual_machine" "linux_machine" {
+  count                           = local.deploy.vms ? 1 : 0
   admin_username                  = "terragoat-linux"
   admin_password                  = random_string.password.result
-  location                        = var.location
+  location                        = local.location
   name                            = "terragoat-linux"
-  network_interface_ids           = [azurerm_network_interface.ni_linux.id]
-  resource_group_name             = azurerm_resource_group.example.name
+  network_interface_ids           = [azurerm_network_interface.ni_linux[0].id]
+  resource_group_name             = local.resource_group_name
   size                            = "Standard_F2"
   disable_password_authentication = false
   source_image_reference {
     publisher = "Canonical"
-    offer     = "UbuntuServer"
-    sku       = "16.04-LTS"
+    offer     = "0001-com-ubuntu-server-jammy"
+    sku       = "22_04-lts"
     version   = "latest"
   }
   os_disk {
@@ -41,13 +42,14 @@ resource azurerm_linux_virtual_machine "linux_machine" {
   })
 }
 
-resource azurerm_windows_virtual_machine "windows_machine" {
+resource "azurerm_windows_virtual_machine" "windows_machine" {
+  count                 = local.deploy.vms ? 1 : 0
   admin_password        = random_string.password.result
   admin_username        = "tg-${var.environment}"
-  location              = var.location
+  location              = local.location
   name                  = "tg-win"
-  network_interface_ids = [azurerm_network_interface.ni_win.id]
-  resource_group_name   = azurerm_resource_group.example.name
+  network_interface_ids = [azurerm_network_interface.ni_win[0].id]
+  resource_group_name   = local.resource_group_name
   size                  = "Standard_F2"
   os_disk {
     caching              = "ReadWrite"

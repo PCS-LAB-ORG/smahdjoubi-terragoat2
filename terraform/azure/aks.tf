@@ -1,8 +1,9 @@
-resource azurerm_kubernetes_cluster "k8s_cluster" {
+resource "azurerm_kubernetes_cluster" "k8s_cluster" {
+  count               = local.deploy.aks ? 1 : 0
   dns_prefix          = "terragoat-${var.environment}"
-  location            = var.location
+  location            = local.location
   name                = "terragoat-aks-${var.environment}"
-  resource_group_name = azurerm_resource_group.example.name
+  resource_group_name = local.resource_group_name
   identity {
     type = "SystemAssigned"
   }
@@ -11,17 +12,9 @@ resource azurerm_kubernetes_cluster "k8s_cluster" {
     vm_size    = "Standard_D2_v2"
     node_count = 2
   }
-  addon_profile {
-    oms_agent {
-      enabled = false
-    }
-    kube_dashboard {
-      enabled = true
-    }
-  }
-  role_based_access_control {
-    enabled = false
-  }
+  # No oms_agent block = no Azure Monitor logging for the cluster.
+  # (The kube_dashboard add-on was removed from AKS and can no longer be enabled.)
+  role_based_access_control_enabled = false
   tags = {
     git_commit           = "898d5beaec7ffdef6df0d7abecff407362e2a74e"
     git_file             = "terraform/azure/aks.tf"

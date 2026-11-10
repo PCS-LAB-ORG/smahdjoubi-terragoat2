@@ -1,8 +1,11 @@
 resource "azurerm_virtual_network" "example" {
+  count               = local.deploy_vnet ? 1 : 0
   name                = "terragoat-vn-${var.environment}"
   address_space       = ["10.0.0.0/16"]
-  location            = azurerm_resource_group.example.location
-  resource_group_name = azurerm_resource_group.example.name
+  location            = local.location
+  resource_group_name = local.resource_group_name
+  # Create our network watcher (if needed) first so Azure doesn't auto-create one
+  depends_on = [azurerm_network_watcher.network_watcher]
   tags = {
     git_commit           = "898d5beaec7ffdef6df0d7abecff407362e2a74e"
     git_file             = "terraform/azure/networking.tf"
@@ -16,20 +19,22 @@ resource "azurerm_virtual_network" "example" {
 }
 
 resource "azurerm_subnet" "example" {
+  count                = local.deploy_vnet ? 1 : 0
   name                 = "terragoat-${var.environment}"
-  resource_group_name  = azurerm_resource_group.example.name
-  virtual_network_name = azurerm_virtual_network.example.name
+  resource_group_name  = local.resource_group_name
+  virtual_network_name = azurerm_virtual_network.example[0].name
   address_prefixes     = ["10.0.0.0/24"]
 }
 
 resource "azurerm_network_interface" "ni_linux" {
+  count               = local.deploy.vms ? 1 : 0
   name                = "terragoat-linux-${var.environment}"
-  location            = azurerm_resource_group.example.location
-  resource_group_name = azurerm_resource_group.example.name
+  location            = local.location
+  resource_group_name = local.resource_group_name
 
   ip_configuration {
     name                          = "internal"
-    subnet_id                     = azurerm_subnet.example.id
+    subnet_id                     = azurerm_subnet.example[0].id
     private_ip_address_allocation = "Dynamic"
   }
   tags = {
@@ -45,13 +50,14 @@ resource "azurerm_network_interface" "ni_linux" {
 }
 
 resource "azurerm_network_interface" "ni_win" {
+  count               = local.deploy.vms ? 1 : 0
   name                = "terragoat-win-${var.environment}"
-  location            = azurerm_resource_group.example.location
-  resource_group_name = azurerm_resource_group.example.name
+  location            = local.location
+  resource_group_name = local.resource_group_name
 
   ip_configuration {
     name                          = "internal"
-    subnet_id                     = azurerm_subnet.example.id
+    subnet_id                     = azurerm_subnet.example[0].id
     private_ip_address_allocation = "Dynamic"
   }
   tags = {
@@ -66,17 +72,18 @@ resource "azurerm_network_interface" "ni_win" {
   }
 }
 
-resource azurerm_network_security_group "bad_sg" {
-  location            = var.location
+resource "azurerm_network_security_group" "bad_sg" {
+  count               = local.deploy.networking ? 1 : 0
+  location            = local.location
   name                = "terragoat-${var.environment}"
-  resource_group_name = azurerm_resource_group.example.name
+  resource_group_name = local.resource_group_name
 
   security_rule {
     access                     = "Allow"
     direction                  = "Inbound"
     name                       = "AllowSSH"
     priority                   = 200
-    protocol                   = "TCP"
+    protocol                   = "Tcp"
     source_address_prefix      = "*"
     source_port_range          = "*"
     destination_port_range     = "22-22"
@@ -88,7 +95,7 @@ resource azurerm_network_security_group "bad_sg" {
     direction                  = "Inbound"
     name                       = "AllowRDP"
     priority                   = 300
-    protocol                   = "TCP"
+    protocol                   = "Tcp"
     source_address_prefix      = "*"
     source_port_range          = "*"
     destination_port_range     = "3389-3389"
@@ -106,10 +113,39 @@ resource azurerm_network_security_group "bad_sg" {
   }
 }
 
-resource azurerm_network_watcher "network_watcher" {
-  location            = var.location
-  name                = "terragoat-network-watcher-${var.environment}"
-  resource_group_name = azurerm_resource_group.example.name
+# Azure allows only ONE network watcher per region per subscription, and usually
+# auto-creates "NetworkWatcher_<region>" in "NetworkWatcherRG". Reuse an existing one
+# if present (ignoring the one this stack may have created itself); otherwise create it.
+data "azurerm_resources" "network_watchers" {
+  count = local.deploy.networking ? 1 : 0
+  type  = "Microsoft.Network/networkWatchers"
+}
+
+locals {
+  normalized_location      = lower(replace(local.location, " ", ""))
+  own_network_watcher_name = "terragoat-network-watcher-${var.environment}"
+  existing_network_watchers = [
+    for w in flatten(data.azurerm_resources.network_watchers[*].resources) : w
+    if lower(w.location) == local.normalized_location && !(
+      lower(w.name) == lower(local.own_network_watcher_name) && lower(w.resource_group_name) == lower(local.resource_group_name)
+    )
+  ]
+  create_network_watcher         = local.deploy.networking && length(local.existing_network_watchers) == 0
+  network_watcher_name           = local.create_network_watcher ? local.own_network_watcher_name : local.existing_network_watchers[0].name
+  network_watcher_resource_group = local.create_network_watcher ? local.resource_group_name : local.existing_network_watchers[0].resource_group_name
+
+  # The flow log is a child of the network watcher, so it is created in the watcher's
+  # resource group. Skip it when that group is outside our permissions (e.g. NetworkWatcherRG).
+  create_flow_log = local.deploy.networking && (
+    var.deploy_subscription_resources || lower(local.network_watcher_resource_group) == lower(local.resource_group_name)
+  )
+}
+
+resource "azurerm_network_watcher" "network_watcher" {
+  count               = local.create_network_watcher ? 1 : 0
+  location            = local.location
+  name                = local.own_network_watcher_name
+  resource_group_name = local.resource_group_name
   tags = {
     git_commit           = "898d5beaec7ffdef6df0d7abecff407362e2a74e"
     git_file             = "terraform/azure/networking.tf"
@@ -122,12 +158,17 @@ resource azurerm_network_watcher "network_watcher" {
   }
 }
 
-resource azurerm_network_watcher_flow_log "flow_log" {
-  enabled                   = false
-  network_security_group_id = azurerm_network_security_group.bad_sg.id
-  network_watcher_name      = azurerm_network_watcher.network_watcher.name
-  resource_group_name       = azurerm_resource_group.example.name
-  storage_account_id        = azurerm_storage_account.example.id
+# Azure no longer allows creating NSG flow logs (retired July 2025), so the flow log
+# targets the virtual network instead. It is still disabled, with no retention.
+resource "azurerm_network_watcher_flow_log" "flow_log" {
+  count                = local.create_flow_log ? 1 : 0
+  name                 = "terragoat-flow-log-${var.environment}"
+  enabled              = false
+  target_resource_id   = azurerm_virtual_network.example[0].id
+  network_watcher_name = local.network_watcher_name
+  resource_group_name  = local.network_watcher_resource_group
+  location             = local.location
+  storage_account_id   = azurerm_storage_account.example[0].id
   retention_policy {
     enabled = false
     days    = 10

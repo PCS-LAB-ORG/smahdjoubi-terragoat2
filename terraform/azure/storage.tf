@@ -1,13 +1,12 @@
 resource "azurerm_managed_disk" "example" {
+  count                = local.deploy.storage ? 1 : 0
   name                 = "terragoat-disk-${var.environment}"
-  location             = var.location
-  resource_group_name  = azurerm_resource_group.example.name
+  location             = local.location
+  resource_group_name  = local.resource_group_name
   storage_account_type = "Standard_LRS"
   create_option        = "Empty"
   disk_size_gb         = 1
-  encryption_settings {
-    enabled = false
-  }
+  # No encryption_settings block = disk is not encrypted with Azure Disk Encryption
   tags = {
     git_commit           = "d68d2897add9bc2203a5ed0632a5cdd8ff8cefb0"
     git_file             = "terraform/azure/storage.tf"
@@ -21,32 +20,12 @@ resource "azurerm_managed_disk" "example" {
 }
 
 resource "azurerm_storage_account" "example" {
+  count                    = local.deploy_log_storage ? 1 : 0
   name                     = "tgsa${var.environment}${random_integer.rnd_int.result}"
-  resource_group_name      = azurerm_resource_group.example.name
-  location                 = azurerm_resource_group.example.location
+  resource_group_name      = local.resource_group_name
+  location                 = local.location
   account_tier             = "Standard"
   account_replication_type = "GRS"
-  queue_properties {
-    logging {
-      delete                = false
-      read                  = false
-      write                 = true
-      version               = "1.0"
-      retention_policy_days = 10
-    }
-    hour_metrics {
-      enabled               = true
-      include_apis          = true
-      version               = "1.0"
-      retention_policy_days = 10
-    }
-    minute_metrics {
-      enabled               = true
-      include_apis          = true
-      version               = "1.0"
-      retention_policy_days = 10
-    }
-  }
   tags = {
     git_commit           = "5c6b5d60a8aa63a5d37e60f15185d13a967f0542"
     git_file             = "terraform/azure/storage.tf"
@@ -59,11 +38,47 @@ resource "azurerm_storage_account" "example" {
   }
 }
 
+# Queue logging only records writes, not reads or deletes.
+# (queue_properties inside azurerm_storage_account is deprecated in azurerm 4.x)
+resource "azurerm_storage_account_queue_properties" "example" {
+  count              = local.deploy.storage ? 1 : 0
+  storage_account_id = azurerm_storage_account.example[0].id
+  logging {
+    delete                = false
+    read                  = false
+    write                 = true
+    version               = "1.0"
+    retention_policy_days = 10
+  }
+  hour_metrics {
+    include_apis          = true
+    version               = "1.0"
+    retention_policy_days = 10
+  }
+  minute_metrics {
+    include_apis          = true
+    version               = "1.0"
+    retention_policy_days = 10
+  }
+}
+
+# Separate account for the firewall misconfiguration (no "AzureServices" bypass).
+# On the account above it would block the flow log, activity log export and SQL auditing.
+resource "azurerm_storage_account" "restricted" {
+  count                    = local.deploy.storage ? 1 : 0
+  name                     = "tgfw${var.environment}${random_integer.rnd_int.result}"
+  resource_group_name      = local.resource_group_name
+  location                 = local.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+}
+
 resource "azurerm_storage_account_network_rules" "test" {
-  resource_group_name  = azurerm_resource_group.example.name
-  storage_account_name = azurerm_storage_account.example.name
+  count              = local.deploy.storage ? 1 : 0
+  storage_account_id = azurerm_storage_account.restricted[0].id
 
   default_action = "Deny"
-  ip_rules       = ["127.0.0.1"]
-  bypass         = ["Metrics"]
+  # Azure rejects private/loopback addresses (the original 127.0.0.1); this is a reserved documentation IP
+  ip_rules = ["203.0.113.10"]
+  bypass   = ["Metrics"]
 }

@@ -1,4 +1,6 @@
+# Subscription-scoped: only deployed when var.deploy_subscription_resources = true (needs Owner)
 resource "azurerm_policy_definition" "policy-res" {
+  count        = var.deploy_subscription_resources ? 1 : 0
   name         = "terragoat-policy-${var.environment}"
   policy_type  = "Custom"
   mode         = "Indexed"
@@ -35,16 +37,18 @@ POLICY_RULE
 PARAMETERS
 }
 
-resource "azurerm_policy_assignment" "example" {
+# azurerm_policy_assignment was removed in azurerm 3.0
+resource "azurerm_subscription_policy_assignment" "example" {
+  count                = var.deploy_subscription_resources ? 1 : 0
   name                 = "terragoat-policy-assignment-${var.environment}"
-  scope                = "/subscriptions/${data.azurerm_client_config.current.subscription_id}"
-  policy_definition_id = azurerm_policy_definition.policy-res.id
+  subscription_id      = data.azurerm_subscription.current_subscription.id
+  policy_definition_id = azurerm_policy_definition.policy-res[0].id
   description          = "Policy Assignment created via an Acceptance Test"
   display_name         = "My Example Policy Assignment"
   parameters           = <<PARAMETERS
 {
   "allowedLocations": {
-    "value": [ "East US" ]
+    "value": [ "eastus" ]
   }
 }
 PARAMETERS

@@ -1,18 +1,33 @@
 resource "azurerm_key_vault" "example" {
-  name                = "terragoat-key-${var.environment}${random_integer.rnd_int.result}"
-  location            = azurerm_resource_group.example.location
-  resource_group_name = azurerm_resource_group.example.name
+  count               = local.deploy.key_vault ? 1 : 0
+  name                = "tg-kv-${var.environment}${random_integer.rnd_int.result}"
+  location            = local.location
+  resource_group_name = local.resource_group_name
   tenant_id           = data.azurerm_client_config.current.tenant_id
   sku_name            = "premium"
+  # Minimum allowed; a destroyed vault stays soft-deleted this long if it can't be purged
+  soft_delete_retention_days = 7
   access_policy {
     tenant_id = data.azurerm_client_config.current.tenant_id
     object_id = data.azurerm_client_config.current.object_id
+    # Permission names are case-sensitive in azurerm 4.x. Terraform also needs
+    # Get/Delete/Purge to read back and destroy the key and secret below.
     key_permissions = [
-      "create",
-      "get",
+      "Create",
+      "Get",
+      "List",
+      "Delete",
+      "Purge",
+      "Recover",
+      "GetRotationPolicy",
     ]
     secret_permissions = [
-      "set",
+      "Set",
+      "Get",
+      "List",
+      "Delete",
+      "Purge",
+      "Recover",
     ]
   }
   tags = merge({
@@ -31,8 +46,9 @@ resource "azurerm_key_vault" "example" {
 }
 
 resource "azurerm_key_vault_key" "generated" {
+  count        = local.deploy.key_vault ? 1 : 0
   name         = "terragoat-generated-certificate-${var.environment}"
-  key_vault_id = azurerm_key_vault.example.id
+  key_vault_id = azurerm_key_vault.example[0].id
   key_type     = "RSA"
   key_size     = 2048
   key_opts = [
@@ -56,7 +72,8 @@ resource "azurerm_key_vault_key" "generated" {
 }
 
 resource "azurerm_key_vault_secret" "secret" {
-  key_vault_id = azurerm_key_vault.example.id
+  count        = local.deploy.key_vault ? 1 : 0
+  key_vault_id = azurerm_key_vault.example[0].id
   name         = "terragoat-secret-${var.environment}"
   value        = random_string.password.result
   tags = {

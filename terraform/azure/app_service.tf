@@ -1,12 +1,12 @@
-resource azurerm_app_service_plan "example" {
+# azurerm_app_service_plan / azurerm_app_service were removed in azurerm 4.0,
+# replaced by azurerm_service_plan / azurerm_linux_web_app.
+resource "azurerm_service_plan" "example" {
+  count               = local.deploy.app_service ? 1 : 0
   name                = "terragoat-app-service-plan-${var.environment}"
-  location            = azurerm_resource_group.example.location
-  resource_group_name = azurerm_resource_group.example.name
-
-  sku {
-    tier = "Dynamic"
-    size = "S1"
-  }
+  location            = local.location
+  resource_group_name = local.resource_group_name
+  os_type             = "Linux"
+  sku_name            = "B1"
   tags = {
     git_commit           = "898d5beaec7ffdef6df0d7abecff407362e2a74e"
     git_file             = "terraform/azure/app_service.tf"
@@ -19,14 +19,15 @@ resource azurerm_app_service_plan "example" {
   }
 }
 
-resource azurerm_app_service "app-service1" {
-  app_service_plan_id = azurerm_app_service_plan.example.id
-  location            = var.location
+resource "azurerm_linux_web_app" "app-service1" {
+  count               = local.deploy.app_service ? 1 : 0
+  service_plan_id     = azurerm_service_plan.example[0].id
+  location            = azurerm_service_plan.example[0].location
   name                = "terragoat-app-service-${var.environment}${random_integer.rnd_int.result}"
-  resource_group_name = azurerm_resource_group.example.name
+  resource_group_name = local.resource_group_name
   https_only          = false
   site_config {
-    min_tls_version = "1.1"
+    minimum_tls_version = "1.1"
   }
   tags = {
     git_commit           = "81738b80d571fa3034633690d13ffb460e1e7dea"
@@ -40,12 +41,15 @@ resource azurerm_app_service "app-service1" {
   }
 }
 
-resource azurerm_app_service "app-service2" {
-  app_service_plan_id = azurerm_app_service_plan.example.id
-  location            = var.location
-  name                = "terragoat-app-service-${var.environment}${random_integer.rnd_int.result}"
-  resource_group_name = azurerm_resource_group.example.name
+resource "azurerm_linux_web_app" "app-service2" {
+  count               = local.deploy.app_service ? 1 : 0
+  service_plan_id     = azurerm_service_plan.example[0].id
+  location            = azurerm_service_plan.example[0].location
+  name                = "terragoat-app-service2-${var.environment}${random_integer.rnd_int.result}"
+  resource_group_name = local.resource_group_name
   https_only          = true
+
+  site_config {}
 
   auth_settings {
     enabled = false
@@ -61,4 +65,3 @@ resource azurerm_app_service "app-service2" {
     yor_trace            = "ec8295ab-af68-4cff-b0f1-b0cf5eaf1b75"
   }
 }
-
