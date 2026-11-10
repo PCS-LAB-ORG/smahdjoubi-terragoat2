@@ -170,16 +170,15 @@ export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
 The state storage account goes in your resource group. In subscription mode you can also create a separate group for it with `az group create`.
 
 ```bash
-export TERRAGOAT_RESOURCE_GROUP="<your-resource-group>"
+export TF_VAR_resource_group_name="<your-resource-group>"   # existing RG: TerraGoat and its state storage go here
 export TERRAGOAT_STATE_STORAGE_ACCOUNT="mydevsecopssa"   # globally unique, 3-24 lowercase letters/numbers
 export TERRAGOAT_STATE_CONTAINER="mydevsecops"
 export TF_VAR_environment="dev"                         # 1-10 lowercase letters/numbers
-export TF_VAR_resource_group_name=$TERRAGOAT_RESOURCE_GROUP
 export TF_VAR_services='["storage","networking","sql"]'   # what to deploy, or '["all"]'; nothing is deployed by default
 # optional: export TF_VAR_location="westeurope"         # defaults to the resource group's region
 
 # Create storage account
-az storage account create --name $TERRAGOAT_STATE_STORAGE_ACCOUNT --resource-group $TERRAGOAT_RESOURCE_GROUP --sku Standard_LRS --kind StorageV2 --https-only true --min-tls-version TLS1_2
+az storage account create --name $TERRAGOAT_STATE_STORAGE_ACCOUNT --resource-group $TF_VAR_resource_group_name --sku Standard_LRS --kind StorageV2 --https-only true --min-tls-version TLS1_2
 
 # Create blob container
 az storage container create --name $TERRAGOAT_STATE_CONTAINER --account-name $TERRAGOAT_STATE_STORAGE_ACCOUNT --auth-mode key
@@ -192,7 +191,7 @@ az storage container create --name $TERRAGOAT_STATE_CONTAINER --account-name $TE
 ```bash
 cd terraform/azure/
 terraform init -reconfigure \
-    -backend-config="resource_group_name=$TERRAGOAT_RESOURCE_GROUP" \
+    -backend-config="resource_group_name=$TF_VAR_resource_group_name" \
     -backend-config="storage_account_name=$TERRAGOAT_STATE_STORAGE_ACCOUNT" \
     -backend-config="container_name=$TERRAGOAT_STATE_CONTAINER" \
     -backend-config="key=$TF_VAR_environment.terraform.tfstate"
@@ -211,19 +210,18 @@ az login
 az account set --subscription "<SUBSCRIPTION_ID>"
 $env:ARM_SUBSCRIPTION_ID = az account show --query id -o tsv
 
-$env:TERRAGOAT_RESOURCE_GROUP = "<your-resource-group>"
+$env:TF_VAR_resource_group_name = "<your-resource-group>"
 $env:TERRAGOAT_STATE_STORAGE_ACCOUNT = "mydevsecopssa"
 $env:TERRAGOAT_STATE_CONTAINER = "mydevsecops"
 $env:TF_VAR_environment = "dev"
-$env:TF_VAR_resource_group_name = $env:TERRAGOAT_RESOURCE_GROUP
 $env:TF_VAR_services = '["storage","networking","sql"]'
 
-az storage account create --name $env:TERRAGOAT_STATE_STORAGE_ACCOUNT --resource-group $env:TERRAGOAT_RESOURCE_GROUP --sku Standard_LRS --kind StorageV2 --https-only true --min-tls-version TLS1_2
+az storage account create --name $env:TERRAGOAT_STATE_STORAGE_ACCOUNT --resource-group $env:TF_VAR_resource_group_name --sku Standard_LRS --kind StorageV2 --https-only true --min-tls-version TLS1_2
 az storage container create --name $env:TERRAGOAT_STATE_CONTAINER --account-name $env:TERRAGOAT_STATE_STORAGE_ACCOUNT --auth-mode key
 
 cd terraform/azure/
 terraform init -reconfigure `
-    "-backend-config=resource_group_name=$env:TERRAGOAT_RESOURCE_GROUP" `
+    "-backend-config=resource_group_name=$env:TF_VAR_resource_group_name" `
     "-backend-config=storage_account_name=$env:TERRAGOAT_STATE_STORAGE_ACCOUNT" `
     "-backend-config=container_name=$env:TERRAGOAT_STATE_CONTAINER" `
     "-backend-config=key=$env:TF_VAR_environment.terraform.tfstate"
@@ -260,12 +258,13 @@ In resource-group mode, `terraform destroy` removes only what TerraGoat created.
 #### Troubleshooting (Azure)
 
 * **`subscription ID could not be determined`**: set `ARM_SUBSCRIPTION_ID` (see above) or `TF_VAR_subscription_id`.
+* **`AADSTS50076` ... you must use multi-factor authentication** (on any create/update/delete): Azure requires MFA for write operations, and your CLI sign-in has none. Run `az logout`, then the `az login --tenant ... --claims-challenge ...` command printed in the error, and complete the MFA prompt in the browser. Terraform reuses the Azure CLI sign-in.
 * **`AuthorizationFailed` on a subscription-level resource** (role definition, policy, security center, diagnostic setting): you're not Owner. Use resource-group mode (`TF_VAR_deploy_subscription_resources=false`, the default).
 * **`MissingSubscriptionRegistration`**: a resource provider isn't registered. Ask a subscription admin to run `az provider register --namespace <namespace from the error>`, or leave that service out of `TF_VAR_services`.
 * **`QuotaExceeded` / `Operation could not be completed as it results in exceeding approved ... Cores quota`**: request more vCPU quota, choose another region with `TF_VAR_location`, or leave `aks` / `vms` out of `TF_VAR_services`.
 * **`LocationIsOfferRestricted` / `ProvisioningDisabled` / `RegionDoesNotAllowProvisioning`** for SQL, MySQL or PostgreSQL: Azure doesn't allow new servers of that type in that region for your subscription type. Choose another region with `TF_VAR_location`.
 * **A name is already taken**: names include `TF_VAR_environment` plus a random number. Pick another environment name.
-* **The network watcher**: Azure allows one per region per subscription. TerraGoat reuses an existing one, usually `NetworkWatcher_<region>` in `NetworkWatcherRG`. In resource-group mode, the (disabled) VNet flow log is skipped when that watcher sits outside your resource group.
+* **`NetworkWatcherCountLimitReached` / network watcher already exists**: Azure allows one network watcher per region per subscription, and auto-creates `NetworkWatcher_<region>` in `NetworkWatcherRG` when the first VNet in a region appears (including the VNet AKS creates for itself). TerraGoat reuses an existing watcher, and only creates its own (before the VNet and AKS) when the region has none. If an older TerraGoat version or a failed run hit this error, run `terraform apply` again: the watcher Azure created in the meantime is detected and reused. In resource-group mode, the (disabled) VNet flow log is skipped when the watcher sits outside your resource group.
 
 ### GCP Setup
 

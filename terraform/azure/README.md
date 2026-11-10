@@ -33,7 +33,7 @@ Shared pieces are created automatically when a selected service needs them:
 * The **VNet and default subnet** come with `networking`, `vms` or `app_gateway`.
 * The **`tgsa…` storage account** comes with `storage`, `networking`, `sql` or `deploy_subscription_resources`. The flow log, SQL threat detection and activity log export write to it.
 
-The logic is in `services.tf`. Deploying with `["all"]` takes about 20–30 minutes; AKS, the App Gateway and the database servers are the slowest. Resource names include `environment` plus a random number, so several stacks can coexist.
+The logic is in `services.tf`. Deploying with `["all"]` takes about 15–25 minutes (verified: 35 resources applied and destroyed cleanly in resource-group mode, France Central, azurerm 4.81, November 2026); AKS, the App Gateway and the database servers are the slowest. Resource names include `environment` plus a random number, so several stacks can coexist.
 
 ## Permission modes
 
@@ -50,7 +50,7 @@ In resource-group mode, these resource providers must already be registered on t
 
 ```bash
 for ns in Microsoft.ContainerService Microsoft.Network Microsoft.Compute Microsoft.Storage Microsoft.Web \
-          Microsoft.KeyVault Microsoft.Sql Microsoft.DBforMySQL Microsoft.DBforPostgreSQL; do
+          Microsoft.KeyVault Microsoft.Sql Microsoft.DBforMySQL Microsoft.DBforPostgreSQL Microsoft.Insights; do
   echo "$ns: $(az provider show -n $ns --query registrationState -o tsv)"
 done
 # admin: az provider register --namespace <namespace>
