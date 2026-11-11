@@ -1,17 +1,17 @@
 # azurerm_app_service_plan / azurerm_app_service were removed in azurerm 4.0,
 # replaced by azurerm_service_plan / azurerm_linux_web_app.
 #
-# The web apps exist twice, with the same misconfigurations:
-# - azurerm_linux_web_app (subscription mode): the azurerm provider runs a name-availability
-#   check at SUBSCRIPTION scope (Microsoft.Web/checknameavailability) before creating a web app,
-#   which fails with only Contributor on the resource group. IaC scanners (Checkov, Prisma Cloud,
-#   Cortex Cloud) analyse these definitions.
-# - azapi_resource (resource-group mode): creates the same web apps with a plain PUT in the
+# The web apps are defined twice, with the same misconfigurations; var.web_apps_via_azapi picks one:
+# - azurerm_linux_web_app (default): IaC scanners (Checkov, Prisma Cloud, Cortex Cloud) analyse
+#   these. Before creating a web app, the azurerm provider runs a name-availability check at
+#   SUBSCRIPTION scope (Microsoft.Web/checknameavailability), which Contributor on a resource
+#   group alone may not allow.
+# - azapi_resource (web_apps_via_azapi = true): creates the same apps with a plain PUT in the
 #   resource group, so Contributor on the resource group is enough. IaC scanners don't analyse
-#   azapi resources, but runtime (CSPM) scanners see the deployed apps as usual.
+#   azapi resources; runtime (CSPM) scanners see the deployed apps as usual.
 locals {
-  web_apps_via_azurerm = local.deploy.app_service && var.deploy_subscription_resources
-  web_apps_via_azapi   = local.deploy.app_service && !var.deploy_subscription_resources
+  web_apps_via_azurerm = local.deploy.app_service && !var.web_apps_via_azapi
+  web_apps_via_azapi   = local.deploy.app_service && var.web_apps_via_azapi
 }
 
 resource "azurerm_service_plan" "example" {
@@ -33,7 +33,7 @@ resource "azurerm_service_plan" "example" {
   }
 }
 
-# --- Subscription mode -------------------------------------------------------------------
+# --- Default: azurerm --------------------------------------------------------------------
 
 resource "azurerm_linux_web_app" "app-service1" {
   count               = local.web_apps_via_azurerm ? 1 : 0
@@ -82,7 +82,7 @@ resource "azurerm_linux_web_app" "app-service2" {
   }
 }
 
-# --- Resource-group mode (same apps, same misconfigurations) -----------------------------
+# --- web_apps_via_azapi = true (same apps, same misconfigurations) ------------------------
 # Defaults left in place on purpose: FTP(S) allowed, no client certificates, HTTP/1.1 only,
 # no managed identity, no logging, public network access, no App Service authentication.
 

@@ -22,7 +22,7 @@ Setup and deployment steps are in the [main README](../../README.md#azure-setup)
 | `vms` | `instance.tf` | Linux VM + Windows VM (`Standard_F2`) + NICs | medium |
 | `aks` | `aks.tf` | AKS cluster, 2 × `Standard_D2_v2` nodes | **high** |
 | `app_gateway` | `application_gateway.tf` | Application Gateway `Standard_v2`, public IP, subnet | **high** |
-| `app_service` | `app_service.tf` | App Service plan `B1`, 2 Linux web apps (created with `azapi` in resource-group mode, see below) | low |
+| `app_service` | `app_service.tf` | App Service plan `B1`, 2 Linux web apps (`azurerm`, or `azapi` with `web_apps_via_azapi = true`, see below) | low |
 | `key_vault` | `key_vault.tf` | Key Vault (premium), RSA key, secret | low |
 | `sql` | `sql.tf` | Azure SQL server + firewall rule + threat detection policy | low (no database) |
 | `mysql` | `sql.tf` | MySQL flexible server (`B_Standard_B1ms`) + parameter | low |
@@ -40,11 +40,11 @@ The logic is in `services.tf`. Deploying with `["all"]` takes about 15–25 minu
 | | **Resource-group mode** (default) | **Subscription mode** |
 |---|---|---|
 | Required role | **Contributor on one existing resource group**, nothing at subscription level | **Owner** on the subscription |
-| Settings | `TF_VAR_resource_group_name=<your RG>` | `TF_VAR_deploy_subscription_resources=true` (and optionally leave `resource_group_name` unset so TerraGoat creates `terragoat-<env>`) |
+| Settings | `TF_VAR_resource_group_name=<your RG>` (required in this mode) | `TF_VAR_deploy_subscription_resources=true` (and optionally leave `resource_group_name` unset so TerraGoat creates `terragoat-<env>`) |
 | Subscription-scoped resources (role, policy, Defender, security contact, activity log export) | skipped | deployed |
 | Resource provider registration | **none**: providers must already be registered (see below) | done automatically by the provider |
 | Network watcher + VNet flow log | **not deployed**: TerraGoat never looks up, creates or changes a network watcher (they live in `NetworkWatcherRG`, outside your permissions) | existing regional watcher reused (or one created), flow log created in its resource group |
-| Web apps | created with the `azapi` provider: the azurerm web app resource runs a name check at subscription scope that Contributor on the RG cannot do | created with `azurerm_linux_web_app` |
+| Web apps | `azurerm_linux_web_app` by default. That resource runs a name check at **subscription** scope (`Microsoft.Web/checknameavailability`); if the deploy fails with `AuthorizationFailed` on it, set `TF_VAR_web_apps_via_azapi=true` to create the same apps through `azapi` | `azurerm_linux_web_app` |
 | Key Vault on destroy | left soft-deleted for 7 days (purging needs subscription permissions) | purged |
 
 In resource-group mode, these resource providers must already be registered on the subscription. You cannot check or register them with resource-group permissions, so ask a subscription admin to run:
@@ -57,14 +57,15 @@ done
 # check: az provider show -n <namespace> --query registrationState -o tsv
 ```
 
-**How resource-group mode was verified:** a full deployment into an existing resource group succeeded, and the Azure activity log showed every write stayed inside that group. That run used an Owner account, though. Running with *only* Contributor on the group (no subscription access) was checked by reading the azurerm 4.81 source for every resource used here: the only subscription-scoped calls are the web app name check (avoided with `azapi`), the network watcher lookup (skipped) and the Key Vault soft-delete lookup (the provider tolerates the 403). It was not run end-to-end with a Contributor-only identity.
+**How resource-group mode was verified:** a full deployment into an existing resource group succeeded, and the Azure activity log showed every write stayed inside that group. That run used an Owner account, though. Running with *only* Contributor on the group (no subscription access) was checked by reading the azurerm 4.81 source for every resource used here: the only subscription-scoped calls are the web app name check (if Azure refuses it, switch to `web_apps_via_azapi = true`), the network watcher lookup (skipped) and the Key Vault soft-delete lookup (the provider tolerates the 403). It was not run end-to-end with a Contributor-only identity.
 
 ## Variables and service selection
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `services` | `[]` (nothing) | Services to deploy: any of `storage`, `networking`, `vms`, `aks`, `app_gateway`, `app_service`, `key_vault`, `sql`, `mysql`, `postgresql`, or `all` |
-| `resource_group_name` | `null` | Existing resource group to deploy into; `null` = create `terragoat-<env>` |
+| `resource_group_name` | `null` | Existing resource group to deploy into. **Required** unless `deploy_subscription_resources = true`, where `null` creates `terragoat-<env>` |
+| `web_apps_via_azapi` | `false` | Create the web apps with `azapi` instead of `azurerm` (use it if the web app name check fails with `AuthorizationFailed`) |
 | `deploy_subscription_resources` | `false` | Enables subscription-scoped resources (needs Owner) |
 | `environment` | `dev` | 1–10 lowercase letters/numbers, part of every resource name |
 | `location` | RG location, or `East US` | Azure region |
@@ -85,7 +86,7 @@ Or pass it on the command line: `terraform plan -var='services=["key_vault","app
 
 ## Misconfiguration catalog
 
-**Check IDs** are [Checkov](https://www.checkov.io/) policy IDs, verified by scanning this folder with Checkov. A scan with `deploy_subscription_resources=true` reports **112 failed checks** across 88 distinct checks; with the default settings it reports 79 (see [below](#what-prisma-cloud--cortex-cloud-will-report) for why).
+**Check IDs** are [Checkov](https://www.checkov.io/) policy IDs, verified by scanning this folder with Checkov. A scan with `deploy_subscription_resources=true` reports **112 failed checks** across 88 distinct checks; with the default settings it reports 105 (see [below](#what-prisma-cloud--cortex-cloud-will-report) for why).
 
 Two kinds of finding:
 
@@ -135,7 +136,7 @@ Hardening: CKV_AZURE_117, CKV_AZURE_168, CKV_AZURE_170, CKV_AZURE_171, CKV_AZURE
 
 ### App Service (`app_service.tf`)
 
-The check IDs below come from the `azurerm_linux_web_app` definitions, which IaC scanners report only with `deploy_subscription_resources = true`. In resource-group mode the same two apps, with the same settings, are created through `azapi_resource`, which scanners do not analyse; runtime scanners see them as usual.
+The check IDs below come from the `azurerm_linux_web_app` definitions (the default). With `web_apps_via_azapi = true` the same two apps, with the same settings, are created through `azapi_resource` instead; IaC scanners do not analyse azapi resources, so these findings then disappear from IaC scans, while runtime scanners still see the deployed apps.
 
 | Resource | Intentional misconfiguration | Check IDs |
 |----------|------------------------------|-----------|
@@ -215,8 +216,8 @@ The two scans see different things. An IaC scan reads the Terraform files; a run
 * An IaC scan reports every service in the code. A runtime scan reports only the services you deployed.
 
 * **IaC scanning (Prisma Cloud Application Security / Code Security, Cortex Cloud Application Security).** Palo Alto Networks' IaC scanning is built on Checkov, so a scan of this folder reports the same misconfigurations as the tables above. The console shows its own policy names and severities, but each policy maps to the Checkov ID above.
-  * **Service selection:** Checkov does not evaluate the `services` selection, so a repo scan reports all services even though nothing is deployed by default. With default settings that is 79 findings.
-  * **Subscription mode:** `deploy_subscription_resources` is a plain boolean, which Checkov does evaluate. The subscription-scoped resources, the flow log and the `azurerm` web apps (26 findings) are reported only when the scan sets it to `true`, for example `checkov -d . --var-file sub.tfvars`. That brings the total to 112.
+  * **Service selection:** Checkov does not evaluate the `services` selection, so a repo scan reports all services even though nothing is deployed by default. With default settings that is 105 findings.
+  * **Subscription mode:** `deploy_subscription_resources` is a plain boolean, which Checkov does evaluate. The subscription-scoped resources and the flow log are reported only when the scan sets it to `true`, for example `checkov -d . --var-file sub.tfvars`. That brings the total to 112.
 * **Runtime posture (CSPM) on the deployed resources.** After `terraform apply`, a connected Azure account is scanned on the actual resource configuration. Expect most of the intentional misconfigurations above to show up there too, notably:
   * the internet-exposed SSH/RDP NSG rules
   * the storage firewall without trusted services, and public blob access

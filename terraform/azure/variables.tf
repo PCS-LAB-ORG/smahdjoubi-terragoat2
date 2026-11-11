@@ -23,8 +23,14 @@ variable "environment" {
 
 variable "resource_group_name" {
   type        = string
-  description = "Name of an EXISTING resource group to deploy into. Leave null to let TerraGoat create its own resource group (requires subscription-level Contributor)."
+  description = "Name of an EXISTING resource group to deploy into. Required unless deploy_subscription_resources = true, in which case leaving it null makes TerraGoat create its own resource group \"terragoat-<environment>\"."
   default     = null
+
+  # Creating a resource group needs subscription-level permissions, so never try it in resource-group mode
+  validation {
+    condition     = var.resource_group_name != null || var.deploy_subscription_resources
+    error_message = "Set resource_group_name (e.g. TF_VAR_resource_group_name) to your existing resource group. TerraGoat only creates its own resource group when deploy_subscription_resources = true, because that needs subscription-level permissions."
+  }
 }
 
 variable "deploy_subscription_resources" {
@@ -54,4 +60,15 @@ variable "services" {
     ])
     error_message = "Unknown service. Valid values: all, storage, networking, vms, aks, app_gateway, app_service, key_vault, sql, mysql, postgresql."
   }
+}
+
+variable "web_apps_via_azapi" {
+  type        = bool
+  description = <<-EOT
+    Create the two web apps with the azapi provider instead of azurerm_linux_web_app. Set to true if
+    the deploy fails with AuthorizationFailed on "Microsoft.Web/checknameavailability": the azurerm
+    resource runs that name check at subscription scope, which Contributor on a resource group may not
+    allow. The apps and their misconfigurations are identical, but IaC scanners don't analyse azapi.
+  EOT
+  default     = false
 }

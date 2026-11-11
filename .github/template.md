@@ -41,7 +41,7 @@ Before you proceed please take a not of these warning:
 
 ## Requirements
 
-* Terraform >= 1.5 (the Azure stack uses the azurerm provider 4.x)
+* Terraform >= 1.9 (the Azure stack uses the azurerm provider 4.x)
 * aws cli
 * azure cli (>= 2.60)
 
@@ -152,7 +152,7 @@ TerraGoat supports two permission modes:
 > :warning: In subscription mode, `security_center.tf` sets the Defender for Cloud plan for **Virtual Machines** to `Free` for the **whole subscription**. Don't use it on a subscription that relies on Defender for Servers.
 
 Other requirements:
-* **Resource-group mode:** the needed resource providers must already be registered on the subscription. You cannot do that yourself, so ask a subscription admin; the list and command are in [Permission modes](terraform/azure/README.md#permission-modes). This mode never touches network watchers (no flow log is deployed), and creates the web apps with the `azapi` provider, because the azurerm web app resource needs a subscription-level check.
+* **Resource-group mode:** the needed resource providers must already be registered on the subscription. You cannot do that yourself, so ask a subscription admin; the list and command are in [Permission modes](terraform/azure/README.md#permission-modes). This mode never touches network watchers (no flow log is deployed) and never creates a resource group, so `TF_VAR_resource_group_name` is required.
 * About 8 vCPUs of quota in the region if you deploy both `aks` and `vms` (2 AKS nodes + 2 VMs, 2 vCPUs each).
 
 #### Log in to Azure
@@ -259,7 +259,9 @@ In resource-group mode, `terraform destroy` removes only what TerraGoat created.
 
 * **`subscription ID could not be determined`**: set `ARM_SUBSCRIPTION_ID` (see above) or `TF_VAR_subscription_id`.
 * **`AADSTS50076` ... you must use multi-factor authentication** (on any create/update/delete): Azure requires MFA for write operations, and your CLI sign-in has none. Run `az logout`, then the `az login --tenant ... --claims-challenge ...` command printed in the error, and complete the MFA prompt in the browser. Terraform reuses the Azure CLI sign-in.
-* **`AuthorizationFailed` on a subscription-level resource** (role definition, policy, security center, diagnostic setting, network watcher, `checknameavailability`): you're not Owner. Use resource-group mode (`TF_VAR_deploy_subscription_resources=false`, the default).
+* **`AuthorizationFailed` on a subscription-level resource** (role definition, policy, security center, diagnostic setting, network watcher): you're not Owner. Use resource-group mode (`TF_VAR_deploy_subscription_resources=false`, the default).
+* **`AuthorizationFailed` ... `Microsoft.Web/checknameavailability/action` over scope `/subscriptions/...`** when creating the web apps: the azurerm web app resource checks the name at subscription level, which Contributor on your resource group doesn't allow. Set `TF_VAR_web_apps_via_azapi=true` and apply again: the same apps are created through the `azapi` provider. (Choosing a different name doesn't help; the check itself is refused.)
+* **`Invalid value for variable` ... `resource_group_name`**: you're in resource-group mode without `TF_VAR_resource_group_name`. Set it to your existing resource group. Only subscription mode creates a resource group (`terragoat-<environment>`).
 * **`MissingSubscriptionRegistration`**: a resource provider isn't registered. Ask a subscription admin to run `az provider register --namespace <namespace from the error>`, or leave that service out of `TF_VAR_services`.
 * **`QuotaExceeded` / `Operation could not be completed as it results in exceeding approved ... Cores quota`**: request more vCPU quota, choose another region with `TF_VAR_location`, or leave `aks` / `vms` out of `TF_VAR_services`.
 * **`LocationIsOfferRestricted` / `ProvisioningDisabled` / `RegionDoesNotAllowProvisioning`** for SQL, MySQL or PostgreSQL: Azure doesn't allow new servers of that type in that region for your subscription type. Choose another region with `TF_VAR_location`.
