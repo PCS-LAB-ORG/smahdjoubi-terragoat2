@@ -1,0 +1,11 @@
+# Optional: keep the Terraform state in an Azure storage account instead of a local file.
+# Copy this file to backend.tf (git-ignored), fill in the values, then run `terraform init`.
+# If you already have local state, `terraform init -migrate-state` moves it to the storage account.
+terraform {
+  backend "azurerm" {
+    resource_group_name  = "my-resource-group"
+    storage_account_name = "mystateaccount123"
+    container_name       = "tfstate"
+    key                  = "terragoat-dev.tfstate"
+  }
+}

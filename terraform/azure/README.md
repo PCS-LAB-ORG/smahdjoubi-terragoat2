@@ -19,8 +19,8 @@ Setup and deployment steps are in the [main README](../../README.md#azure-setup)
 | – | `resource_group.tf` | Resource group, or a lookup of an existing one | – |
 | `storage` | `storage.tf` | 2 storage accounts (queue logging, firewall rules), managed disk | low |
 | `networking` | `networking.tf` | VNet, subnet, NSG; in subscription mode also network watcher (only if needed) + VNet flow log | low |
-| `vms` | `instance.tf` | Linux VM + Windows VM (`Standard_F2`) + NICs | medium |
-| `aks` | `aks.tf` | AKS cluster, 2 × `Standard_D2_v2` nodes | **high** |
+| `vms` | `instance.tf` | Linux VM + Windows VM (`vm_size`, default `Standard_D2s_v3`) + NICs | medium |
+| `aks` | `aks.tf` | AKS cluster, 2 nodes (`aks_node_size`, default `Standard_D2s_v3`) | **high** |
 | `app_gateway` | `application_gateway.tf` | Application Gateway `Standard_v2`, public IP, subnet | **high** |
 | `app_service` | `app_service.tf` | App Service plan `B1`, 2 Linux web apps (`azurerm`, or `azapi` with `web_apps_via_azapi = true`, see below) | low |
 | `key_vault` | `key_vault.tf` | Key Vault (premium), RSA key, secret | low |
@@ -40,11 +40,11 @@ The logic is in `services.tf`. Deploying with `["all"]` takes about 15–25 minu
 | | **Resource-group mode** (default) | **Subscription mode** |
 |---|---|---|
 | Required role | **Contributor on one existing resource group**, nothing at subscription level | **Owner** on the subscription |
-| Settings | `TF_VAR_resource_group_name=<your RG>` (required in this mode) | `TF_VAR_deploy_subscription_resources=true` (and optionally leave `resource_group_name` unset so TerraGoat creates `terragoat-<env>`) |
+| Settings (`terraform.tfvars`) | `resource_group_name = "<your RG>"` (required in this mode) | `deploy_subscription_resources = true` (and optionally leave `resource_group_name` unset so TerraGoat creates `terragoat-<env>`) |
 | Subscription-scoped resources (role, policy, Defender, security contact, activity log export) | skipped | deployed |
 | Resource provider registration | **none**: providers must already be registered (see below) | done automatically by the provider |
 | Network watcher + VNet flow log | **not deployed**: TerraGoat never looks up, creates or changes a network watcher (they live in `NetworkWatcherRG`, outside your permissions) | existing regional watcher reused (or one created), flow log created in its resource group |
-| Web apps | `azurerm_linux_web_app` by default. That resource runs a name check at **subscription** scope (`Microsoft.Web/checknameavailability`); if the deploy fails with `AuthorizationFailed` on it, set `TF_VAR_web_apps_via_azapi=true` to create the same apps through `azapi` | `azurerm_linux_web_app` |
+| Web apps | `azurerm_linux_web_app` by default. That resource runs a name check at **subscription** scope (`Microsoft.Web/checknameavailability`); if the deploy fails with `AuthorizationFailed` on it, set `web_apps_via_azapi = true` to create the same apps through `azapi` | `azurerm_linux_web_app` |
 | Key Vault on destroy | left soft-deleted for 7 days (purging needs subscription permissions) | purged |
 
 In resource-group mode, these resource providers must already be registered on the subscription. You cannot check or register them with resource-group permissions, so ask a subscription admin to run:
@@ -54,8 +54,9 @@ for ns in Microsoft.ContainerService Microsoft.Network Microsoft.Compute Microso
           Microsoft.KeyVault Microsoft.Sql Microsoft.DBforMySQL Microsoft.DBforPostgreSQL Microsoft.Insights; do
   az provider register --namespace $ns
 done
-# check: az provider show -n <namespace> --query registrationState -o tsv
 ```
+
+To check one: `az provider show -n <namespace> --query registrationState -o tsv`.
 
 **How resource-group mode was verified:** a full deployment into an existing resource group succeeded, and the Azure activity log showed every write stayed inside that group. That run used an Owner account, though. Running with *only* Contributor on the group (no subscription access) was checked by reading the azurerm 4.81 source for every resource used here: the only subscription-scoped calls are the web app name check (if Azure refuses it, switch to `web_apps_via_azapi = true`), the network watcher lookup (skipped) and the Key Vault soft-delete lookup (the provider tolerates the 403). It was not run end-to-end with a Contributor-only identity.
 
@@ -70,19 +71,30 @@ done
 | `environment` | `dev` | 1–10 lowercase letters/numbers, part of every resource name |
 | `location` | RG location, or `East US` | Azure region |
 | `subscription_id` | `null` | Falls back to `ARM_SUBSCRIPTION_ID` |
+| `vm_size` | `Standard_D2s_v3` | Size of the Linux and Windows VMs |
+| `aks_node_size` | `Standard_D2s_v3` | Size of the 2 AKS nodes |
+| `zone` | `null` | Availability zone (`"1"`, `"2"` or `"3"`) for the VMs and AKS nodes. Set it when your size is only offered in some zones (409 `SkuNotAvailable`) |
 
-Examples:
+Set them in `terraform.tfvars` (copy [`terraform.tfvars.example`](terraform.tfvars.example)), which Terraform loads automatically. For example, a cheap stack with storage, networking and Azure SQL:
 
-```bash
-export TF_VAR_services='["storage","networking","sql"]'   # cheap: storage, NSG/flow log, Azure SQL
-export TF_VAR_services='["all"]'                          # everything
+```hcl
+resource_group_name = "my-resource-group"
+services            = ["storage", "networking", "sql"]
 ```
 
-```powershell
-$env:TF_VAR_services = '["storage","networking","sql"]'
+Or everything, with VMs pinned to a size and zone that your subscription can use in the region:
+
+```hcl
+resource_group_name = "my-resource-group"
+services            = ["all"]
+vm_size             = "Standard_D2s_v3"
+aks_node_size       = "Standard_D2s_v3"
+zone                = "2"
 ```
 
-Or pass it on the command line: `terraform plan -var='services=["key_vault","app_service"]'`. An unknown service name fails validation. With an empty list, `terraform plan` shows a warning and plans nothing.
+An unknown service name fails validation. With an empty list, `terraform plan` shows a warning and plans nothing. `TF_VAR_<name>` environment variables also work, but `terraform.tfvars` avoids shell quoting problems with lists.
+
+**Which VM size and zone?** Not every size is available in every region and zone for every subscription; a wrong one fails with 409 `SkuNotAvailable`. Listing them with `az vm list-skus` needs subscription-level read access, so in resource-group mode use the Azure portal instead: Virtual machines > Create, pick your region, and look at the sizes and availability zones it offers. Any size with at least 2 vCPUs and 4 GiB RAM works (e.g. `Standard_D2s_v3`, `Standard_D2s_v5`, `Standard_E2s_v3`, `Standard_B2s`).
 
 ## Misconfiguration catalog
 

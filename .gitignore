@@ -37,3 +37,6 @@ credentials.json
 .DS_Store
 twistcli
 
+
+# TerraGoat Azure: local backend configuration (copied from backend.tf.example)
+terraform/azure/backend.tf

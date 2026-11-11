@@ -72,3 +72,31 @@ variable "web_apps_via_azapi" {
   EOT
   default     = false
 }
+
+# ---------------------------------------------------------------------------
+# Compute sizing. Not every VM size is available in every region / zone for every
+# subscription (409 "SkuNotAvailable"). The Azure portal's VM create page shows which
+# sizes and zones your subscription can use in a region.
+# ---------------------------------------------------------------------------
+variable "vm_size" {
+  type        = string
+  description = "Size of the Linux and Windows VMs (service \"vms\"), e.g. Standard_D2s_v3, Standard_D4s_v3, Standard_E2s_v3, Standard_B2s."
+  default     = "Standard_D2s_v3"
+}
+
+variable "aks_node_size" {
+  type        = string
+  description = "Size of the 2 AKS nodes (service \"aks\"). Needs at least 2 vCPUs / 4 GiB RAM."
+  default     = "Standard_D2s_v3"
+}
+
+variable "zone" {
+  type        = string
+  description = "Availability zone (\"1\", \"2\" or \"3\") for the VMs and AKS nodes. Leave null for no zone; set it when your VM size is only available in some zones of the region."
+  default     = null
+
+  validation {
+    condition     = var.zone == null || contains(["1", "2", "3"], coalesce(var.zone, "x"))
+    error_message = "zone must be \"1\", \"2\", \"3\" or null."
+  }
+}

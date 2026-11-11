@@ -1,0 +1,35 @@
+# Copy this file to terraform.tfvars (git-ignored) and adjust it. Terraform loads
+# terraform.tfvars automatically, so `terraform plan` / `terraform apply` need no -var
+# arguments, which avoids shell quoting problems (e.g. PowerShell's
+# "Too many command line arguments").
+
+# Your EXISTING resource group (required unless deploy_subscription_resources = true)
+resource_group_name = "my-resource-group"
+
+# 1-10 lowercase letters/numbers, part of every resource name
+environment = "dev"
+
+# What to deploy (nothing by default). Any of:
+#   storage, networking, vms, aks, app_gateway, app_service, key_vault, sql, mysql, postgresql
+# or ["all"]
+services = ["storage", "networking", "sql"]
+
+# Region. Defaults to the resource group's region.
+# location = "westeurope"
+
+# VM / AKS node sizes and zone. If you get 409 "SkuNotAvailable", pick a size and zone that
+# the Azure portal (Virtual machines > Create > Size / Availability zone) offers for your region.
+# vm_size       = "Standard_D2s_v3"
+# aks_node_size = "Standard_D2s_v3"
+# zone          = "2"
+
+# Create the web apps via azapi if azurerm's subscription-level name check is refused
+# (AuthorizationFailed on Microsoft.Web/checknameavailability).
+# web_apps_via_azapi = true
+
+# Only if you are Owner of the subscription: custom role, policy, Defender, activity log,
+# network watcher + flow log, provider registration, Key Vault purge on destroy.
+# deploy_subscription_resources = true
+
+# Usually set via the ARM_SUBSCRIPTION_ID environment variable instead.
+# subscription_id = "00000000-0000-0000-0000-000000000000"

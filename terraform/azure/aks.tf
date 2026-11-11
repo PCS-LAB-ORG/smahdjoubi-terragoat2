@@ -9,7 +9,8 @@ resource "azurerm_kubernetes_cluster" "k8s_cluster" {
   }
   default_node_pool {
     name       = "default"
-    vm_size    = "Standard_D2_v2"
+    vm_size    = var.aks_node_size
+    zones      = var.zone == null ? null : [var.zone]
     node_count = 2
     # AKS sets these defaults server-side; declaring them avoids a perpetual diff
     upgrade_settings {

@@ -10,15 +10,15 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
-    # Used for the web apps in resource-group mode only (see app_service.tf)
+    # Used only for the web apps when web_apps_via_azapi = true (see app_service.tf)
     azapi = {
       source  = "Azure/azapi"
       version = "~> 2.0"
     }
   }
 
-  backend "azurerm" {
-  }
+  # State is local (terraform.tfstate) by default. For remote state in an Azure storage
+  # account, copy backend.tf.example to backend.tf (git-ignored) and fill it in.
 }
 
 provider "azurerm" {

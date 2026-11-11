@@ -14,7 +14,8 @@ resource "azurerm_linux_virtual_machine" "linux_machine" {
   name                            = "terragoat-linux"
   network_interface_ids           = [azurerm_network_interface.ni_linux[0].id]
   resource_group_name             = local.resource_group_name
-  size                            = "Standard_F2"
+  size                            = var.vm_size
+  zone                            = var.zone
   disable_password_authentication = false
   source_image_reference {
     publisher = "Canonical"
@@ -50,7 +51,8 @@ resource "azurerm_windows_virtual_machine" "windows_machine" {
   name                  = "tg-win"
   network_interface_ids = [azurerm_network_interface.ni_win[0].id]
   resource_group_name   = local.resource_group_name
-  size                  = "Standard_F2"
+  size                  = var.vm_size
+  zone                  = var.zone
   os_disk {
     caching              = "ReadWrite"
     storage_account_type = "Standard_LRS"
