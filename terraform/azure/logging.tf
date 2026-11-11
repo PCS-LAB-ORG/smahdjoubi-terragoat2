@@ -6,7 +6,7 @@
 resource "azurerm_monitor_diagnostic_setting" "activity_log" {
   count              = var.deploy_subscription_resources ? 1 : 0
   name               = "terragoat-activity-log-${var.environment}"
-  target_resource_id = data.azurerm_subscription.current_subscription.id
+  target_resource_id = data.azurerm_subscription.current_subscription[0].id
   storage_account_id = azurerm_storage_account.example[0].id
 
   enabled_log {

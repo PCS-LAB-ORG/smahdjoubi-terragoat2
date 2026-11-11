@@ -10,6 +10,11 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
+    # Used for the web apps in resource-group mode only (see app_service.tf)
+    azapi = {
+      source  = "Azure/azapi"
+      version = "~> 2.0"
+    }
   }
 
   backend "azurerm" {
@@ -41,6 +46,12 @@ provider "azurerm" {
       data_plane_available = false
     }
   }
+}
+
+provider "azapi" {
+  subscription_id = var.subscription_id
+  # Same reason as resource_provider_registrations above
+  skip_provider_registration = !var.deploy_subscription_resources
 }
 
 data "azurerm_client_config" "current" {}

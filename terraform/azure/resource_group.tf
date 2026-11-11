@@ -23,6 +23,7 @@ resource "azurerm_resource_group" "example" {
 
 locals {
   resource_group_name = var.resource_group_name == null ? azurerm_resource_group.example[0].name : data.azurerm_resource_group.existing[0].name
+  resource_group_id   = var.resource_group_name == null ? azurerm_resource_group.example[0].id : data.azurerm_resource_group.existing[0].id
   # Explicit var.location wins, then the existing resource group's region, then East US
   location = coalesce(
     var.location,

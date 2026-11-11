@@ -113,11 +113,19 @@ resource "azurerm_network_security_group" "bad_sg" {
   }
 }
 
-# Azure allows only ONE network watcher per region per subscription, and usually
-# auto-creates "NetworkWatcher_<region>" in "NetworkWatcherRG". Reuse an existing one
-# if present (ignoring the one this stack may have created itself); otherwise create it.
+# Network watcher + flow log: SUBSCRIPTION MODE ONLY.
+#
+# Azure allows only ONE network watcher per region per subscription, usually auto-created as
+# "NetworkWatcher_<region>" in "NetworkWatcherRG", and a flow log must live in the watcher's
+# resource group. Finding the existing watcher needs subscription-wide read access, and using it
+# needs write access to NetworkWatcherRG. In resource-group mode we have neither, so we never
+# look up, create or modify a network watcher there. (If the region has none, Azure creates one
+# itself when the first VNet appears, using its own permissions, not the deployer's.)
+#
+# In subscription mode: reuse an existing watcher in the region (ignoring the one this stack may
+# have created itself), otherwise create one.
 data "azurerm_resources" "network_watchers" {
-  count = local.deploy.networking ? 1 : 0
+  count = local.deploy.networking && var.deploy_subscription_resources ? 1 : 0
   type  = "Microsoft.Network/networkWatchers"
 }
 
@@ -130,15 +138,11 @@ locals {
       lower(w.name) == lower(local.own_network_watcher_name) && lower(w.resource_group_name) == lower(local.resource_group_name)
     )
   ]
-  create_network_watcher         = local.deploy.networking && length(local.existing_network_watchers) == 0
-  network_watcher_name           = local.create_network_watcher ? local.own_network_watcher_name : local.existing_network_watchers[0].name
-  network_watcher_resource_group = local.create_network_watcher ? local.resource_group_name : local.existing_network_watchers[0].resource_group_name
-
-  # The flow log is a child of the network watcher, so it is created in the watcher's
-  # resource group. Skip it when that group is outside our permissions (e.g. NetworkWatcherRG).
-  create_flow_log = local.deploy.networking && (
-    var.deploy_subscription_resources || lower(local.network_watcher_resource_group) == lower(local.resource_group_name)
-  )
+  manage_network_watcher         = local.deploy.networking && var.deploy_subscription_resources
+  create_network_watcher         = local.manage_network_watcher && length(local.existing_network_watchers) == 0
+  network_watcher_name           = local.create_network_watcher ? local.own_network_watcher_name : try(local.existing_network_watchers[0].name, null)
+  network_watcher_resource_group = local.create_network_watcher ? local.resource_group_name : try(local.existing_network_watchers[0].resource_group_name, null)
+  create_flow_log                = local.manage_network_watcher
 }
 
 resource "azurerm_network_watcher" "network_watcher" {

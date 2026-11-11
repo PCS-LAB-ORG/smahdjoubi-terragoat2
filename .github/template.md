@@ -146,13 +146,13 @@ TerraGoat supports two permission modes:
 
 | Mode | You need | How |
 |------|----------|-----|
-| **Resource-group mode** (default) | Reader on the subscription + **Contributor on an existing resource group** | `TF_VAR_resource_group_name=<your RG>` |
+| **Resource-group mode** (default) | **Contributor on an existing resource group**, nothing at subscription level | `TF_VAR_resource_group_name=<your RG>` |
 | **Subscription mode** | **Owner** on the subscription | `TF_VAR_deploy_subscription_resources=true`; TerraGoat creates its own resource group if `TF_VAR_resource_group_name` is unset. It also deploys a custom role, a policy assignment, Defender for Cloud pricing + contact, and an activity log export. |
 
 > :warning: In subscription mode, `security_center.tf` sets the Defender for Cloud plan for **Virtual Machines** to `Free` for the **whole subscription**. Don't use it on a subscription that relies on Defender for Servers.
 
 Other requirements:
-* **Resource-group mode:** the needed resource providers must already be registered on the subscription. See [Permission modes](terraform/azure/README.md#permission-modes) for the list and a check command.
+* **Resource-group mode:** the needed resource providers must already be registered on the subscription. You cannot do that yourself, so ask a subscription admin; the list and command are in [Permission modes](terraform/azure/README.md#permission-modes). This mode never touches network watchers (no flow log is deployed), and creates the web apps with the `azapi` provider, because the azurerm web app resource needs a subscription-level check.
 * About 8 vCPUs of quota in the region if you deploy both `aks` and `vms` (2 AKS nodes + 2 VMs, 2 vCPUs each).
 
 #### Log in to Azure
@@ -259,12 +259,12 @@ In resource-group mode, `terraform destroy` removes only what TerraGoat created.
 
 * **`subscription ID could not be determined`**: set `ARM_SUBSCRIPTION_ID` (see above) or `TF_VAR_subscription_id`.
 * **`AADSTS50076` ... you must use multi-factor authentication** (on any create/update/delete): Azure requires MFA for write operations, and your CLI sign-in has none. Run `az logout`, then the `az login --tenant ... --claims-challenge ...` command printed in the error, and complete the MFA prompt in the browser. Terraform reuses the Azure CLI sign-in.
-* **`AuthorizationFailed` on a subscription-level resource** (role definition, policy, security center, diagnostic setting): you're not Owner. Use resource-group mode (`TF_VAR_deploy_subscription_resources=false`, the default).
+* **`AuthorizationFailed` on a subscription-level resource** (role definition, policy, security center, diagnostic setting, network watcher, `checknameavailability`): you're not Owner. Use resource-group mode (`TF_VAR_deploy_subscription_resources=false`, the default).
 * **`MissingSubscriptionRegistration`**: a resource provider isn't registered. Ask a subscription admin to run `az provider register --namespace <namespace from the error>`, or leave that service out of `TF_VAR_services`.
 * **`QuotaExceeded` / `Operation could not be completed as it results in exceeding approved ... Cores quota`**: request more vCPU quota, choose another region with `TF_VAR_location`, or leave `aks` / `vms` out of `TF_VAR_services`.
 * **`LocationIsOfferRestricted` / `ProvisioningDisabled` / `RegionDoesNotAllowProvisioning`** for SQL, MySQL or PostgreSQL: Azure doesn't allow new servers of that type in that region for your subscription type. Choose another region with `TF_VAR_location`.
 * **A name is already taken**: names include `TF_VAR_environment` plus a random number. Pick another environment name.
-* **`NetworkWatcherCountLimitReached` / network watcher already exists**: Azure allows one network watcher per region per subscription, and auto-creates `NetworkWatcher_<region>` in `NetworkWatcherRG` when the first VNet in a region appears (including the VNet AKS creates for itself). TerraGoat reuses an existing watcher, and only creates its own (before the VNet and AKS) when the region has none. If an older TerraGoat version or a failed run hit this error, run `terraform apply` again: the watcher Azure created in the meantime is detected and reused. In resource-group mode, the (disabled) VNet flow log is skipped when the watcher sits outside your resource group.
+* **`NetworkWatcherCountLimitReached` / network watcher already exists**: Azure allows one network watcher per region per subscription (usually `NetworkWatcher_<region>` in `NetworkWatcherRG`). In resource-group mode TerraGoat never creates or looks up a network watcher, so this cannot happen there. In subscription mode it reuses the existing watcher, and creates its own (before the VNet and AKS) only when the region has none; if a failed run hit this error, run `terraform apply` again.
 
 ### GCP Setup
 

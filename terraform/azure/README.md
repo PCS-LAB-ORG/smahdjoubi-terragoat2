@@ -18,11 +18,11 @@ Setup and deployment steps are in the [main README](../../README.md#azure-setup)
 |----------------------------|------|-----------|--------------|
 | – | `resource_group.tf` | Resource group, or a lookup of an existing one | – |
 | `storage` | `storage.tf` | 2 storage accounts (queue logging, firewall rules), managed disk | low |
-| `networking` | `networking.tf` | VNet, subnet, NSG, network watcher (only if needed), VNet flow log | low |
+| `networking` | `networking.tf` | VNet, subnet, NSG; in subscription mode also network watcher (only if needed) + VNet flow log | low |
 | `vms` | `instance.tf` | Linux VM + Windows VM (`Standard_F2`) + NICs | medium |
 | `aks` | `aks.tf` | AKS cluster, 2 × `Standard_D2_v2` nodes | **high** |
 | `app_gateway` | `application_gateway.tf` | Application Gateway `Standard_v2`, public IP, subnet | **high** |
-| `app_service` | `app_service.tf` | App Service plan `B1`, 2 Linux web apps | low |
+| `app_service` | `app_service.tf` | App Service plan `B1`, 2 Linux web apps (created with `azapi` in resource-group mode, see below) | low |
 | `key_vault` | `key_vault.tf` | Key Vault (premium), RSA key, secret | low |
 | `sql` | `sql.tf` | Azure SQL server + firewall rule + threat detection policy | low (no database) |
 | `mysql` | `sql.tf` | MySQL flexible server (`B_Standard_B1ms`) + parameter | low |
@@ -33,28 +33,31 @@ Shared pieces are created automatically when a selected service needs them:
 * The **VNet and default subnet** come with `networking`, `vms` or `app_gateway`.
 * The **`tgsa…` storage account** comes with `storage`, `networking`, `sql` or `deploy_subscription_resources`. The flow log, SQL threat detection and activity log export write to it.
 
-The logic is in `services.tf`. Deploying with `["all"]` takes about 15–25 minutes (verified: 35 resources applied and destroyed cleanly in resource-group mode, France Central, azurerm 4.81, November 2026); AKS, the App Gateway and the database servers are the slowest. Resource names include `environment` plus a random number, so several stacks can coexist.
+The logic is in `services.tf`. Deploying with `["all"]` takes about 15–25 minutes (verified November 2026 in France Central with azurerm 4.81: 35 resources applied and destroyed cleanly, deploying into an existing resource group as subscription Owner); AKS, the App Gateway and the database servers are the slowest. Resource names include `environment` plus a random number, so several stacks can coexist.
 
 ## Permission modes
 
 | | **Resource-group mode** (default) | **Subscription mode** |
 |---|---|---|
-| Required role | Reader on the subscription + **Contributor on one existing resource group** | **Owner** on the subscription |
+| Required role | **Contributor on one existing resource group**, nothing at subscription level | **Owner** on the subscription |
 | Settings | `TF_VAR_resource_group_name=<your RG>` | `TF_VAR_deploy_subscription_resources=true` (and optionally leave `resource_group_name` unset so TerraGoat creates `terragoat-<env>`) |
 | Subscription-scoped resources (role, policy, Defender, security contact, activity log export) | skipped | deployed |
 | Resource provider registration | **none**: providers must already be registered (see below) | done automatically by the provider |
-| VNet flow log | created only if the region's network watcher is in your RG, or no watcher exists yet (TerraGoat then creates one in your RG) | always created |
+| Network watcher + VNet flow log | **not deployed**: TerraGoat never looks up, creates or changes a network watcher (they live in `NetworkWatcherRG`, outside your permissions) | existing regional watcher reused (or one created), flow log created in its resource group |
+| Web apps | created with the `azapi` provider: the azurerm web app resource runs a name check at subscription scope that Contributor on the RG cannot do | created with `azurerm_linux_web_app` |
 | Key Vault on destroy | left soft-deleted for 7 days (purging needs subscription permissions) | purged |
 
-In resource-group mode, these resource providers must already be registered on the subscription. A Reader can check them, but an admin has to register any that are missing:
+In resource-group mode, these resource providers must already be registered on the subscription. You cannot check or register them with resource-group permissions, so ask a subscription admin to run:
 
 ```bash
 for ns in Microsoft.ContainerService Microsoft.Network Microsoft.Compute Microsoft.Storage Microsoft.Web \
           Microsoft.KeyVault Microsoft.Sql Microsoft.DBforMySQL Microsoft.DBforPostgreSQL Microsoft.Insights; do
-  echo "$ns: $(az provider show -n $ns --query registrationState -o tsv)"
+  az provider register --namespace $ns
 done
-# admin: az provider register --namespace <namespace>
+# check: az provider show -n <namespace> --query registrationState -o tsv
 ```
+
+**How resource-group mode was verified:** a full deployment into an existing resource group succeeded, and the Azure activity log showed every write stayed inside that group. That run used an Owner account, though. Running with *only* Contributor on the group (no subscription access) was checked by reading the azurerm 4.81 source for every resource used here: the only subscription-scoped calls are the web app name check (avoided with `azapi`), the network watcher lookup (skipped) and the Key Vault soft-delete lookup (the provider tolerates the 403). It was not run end-to-end with a Contributor-only identity.
 
 ## Variables and service selection
 
@@ -82,7 +85,7 @@ Or pass it on the command line: `terraform plan -var='services=["key_vault","app
 
 ## Misconfiguration catalog
 
-**Check IDs** are [Checkov](https://www.checkov.io/) policy IDs, verified by scanning this folder with Checkov. A scan with `deploy_subscription_resources=true` reports **112 failed checks** across 88 distinct checks; with the default settings it reports 106.
+**Check IDs** are [Checkov](https://www.checkov.io/) policy IDs, verified by scanning this folder with Checkov. A scan with `deploy_subscription_resources=true` reports **112 failed checks** across 88 distinct checks; with the default settings it reports 79 (see [below](#what-prisma-cloud--cortex-cloud-will-report) for why).
 
 Two kinds of finding:
 
@@ -95,7 +98,6 @@ Two kinds of finding:
 |----------|------------------------------|-----------|
 | `azurerm_network_security_group.bad_sg` | SSH (22) open to `*` (the internet) | CKV_AZURE_10 |
 | `azurerm_network_security_group.bad_sg` | RDP (3389) open to `*` (the internet) | CKV_AZURE_9 |
-| `azurerm_network_watcher_flow_log.flow_log` | Flow log **disabled**, retention disabled | CKV_AZURE_12 |
 | `azurerm_subnet.example` | Subnet has no NSG associated | CKV2_AZURE_31 |
 
 ### Storage (`storage.tf`)
@@ -132,6 +134,8 @@ Hardening: CKV2_AZURE_1 (CMK), CKV2_AZURE_33 (private endpoint), CKV_AZURE_206 (
 Hardening: CKV_AZURE_117, CKV_AZURE_168, CKV_AZURE_170, CKV_AZURE_171, CKV_AZURE_172, CKV_AZURE_226, CKV_AZURE_227, CKV_AZURE_232.
 
 ### App Service (`app_service.tf`)
+
+The check IDs below come from the `azurerm_linux_web_app` definitions, which IaC scanners report only with `deploy_subscription_resources = true`. In resource-group mode the same two apps, with the same settings, are created through `azapi_resource`, which scanners do not analyse; runtime scanners see them as usual.
 
 | Resource | Intentional misconfiguration | Check IDs |
 |----------|------------------------------|-----------|
@@ -192,6 +196,7 @@ A single server carries all SQL misconfigurations. Older TerraGoat versions depl
 | `azurerm_security_center_subscription_pricing.pricing` | Defender for Servers set to **Free** | CKV_AZURE_19, CKV_AZURE_55 |
 | `azurerm_security_center_contact.contact` | Alert notifications and alerts-to-admins disabled, no phone number | CKV_AZURE_20, CKV_AZURE_21, CKV_AZURE_22 |
 | `azurerm_monitor_diagnostic_setting.activity_log` | Activity log export captures only the `Administrative` category | – ³ |
+| `azurerm_network_watcher_flow_log.flow_log` (`networking.tf`) | VNet flow log **disabled**, retention disabled | CKV_AZURE_12 |
 | `azurerm_subscription_policy_assignment.example` | Policy with `audit` effect only (no enforcement) | – |
 
 ¹ The azurerm 4.x provider defaults minimum TLS to 1.2 on storage accounts and SQL servers, so the **deployed** resources use TLS 1.2. IaC scanners still flag them because the attribute is not set explicitly. Runtime (CSPM) scanners will **not** flag them.<br>
@@ -210,8 +215,8 @@ The two scans see different things. An IaC scan reads the Terraform files; a run
 * An IaC scan reports every service in the code. A runtime scan reports only the services you deployed.
 
 * **IaC scanning (Prisma Cloud Application Security / Code Security, Cortex Cloud Application Security).** Palo Alto Networks' IaC scanning is built on Checkov, so a scan of this folder reports the same misconfigurations as the tables above. The console shows its own policy names and severities, but each policy maps to the Checkov ID above.
-  * **Service selection:** Checkov does not evaluate the `services` selection, so a repo scan reports all services even though nothing is deployed by default. That's 106 findings.
-  * **Subscription-scoped resources:** these use a plain boolean, which Checkov does evaluate. They're reported only when the scan sets `deploy_subscription_resources = true`, for example `checkov -d . --var-file sub.tfvars`. That brings the total to 112.
+  * **Service selection:** Checkov does not evaluate the `services` selection, so a repo scan reports all services even though nothing is deployed by default. With default settings that is 79 findings.
+  * **Subscription mode:** `deploy_subscription_resources` is a plain boolean, which Checkov does evaluate. The subscription-scoped resources, the flow log and the `azurerm` web apps (26 findings) are reported only when the scan sets it to `true`, for example `checkov -d . --var-file sub.tfvars`. That brings the total to 112.
 * **Runtime posture (CSPM) on the deployed resources.** After `terraform apply`, a connected Azure account is scanned on the actual resource configuration. Expect most of the intentional misconfigurations above to show up there too, notably:
   * the internet-exposed SSH/RDP NSG rules
   * the storage firewall without trusted services, and public blob access
@@ -221,7 +226,7 @@ The two scans see different things. An IaC scan reads the Terraform files; a run
   * AKS without RBAC
   * web apps without HTTPS-only / with TLS 1.1
   * the App Gateway without WAF
-  * the disabled flow log
+  * the disabled flow log (subscription mode only)
 
   The resource configuration of a runtime scan comes from the Azure API, so it differs from an IaC scan in two ways:
   * Settings that only exist in code (the hard-coded passwords, the "TLS not set explicitly" findings¹) won't appear.
