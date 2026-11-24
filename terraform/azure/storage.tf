@@ -71,6 +71,9 @@ resource "azurerm_storage_account" "restricted" {
   location                 = local.location
   account_tier             = "Standard"
   account_replication_type = "LRS"
+  tags = {
+    yor_trace = "ff17acec-aed7-4902-955a-5e7db86eef4f"
+  }
 }
 
 resource "azurerm_storage_account_network_rules" "test" {
