@@ -22,6 +22,9 @@ resource "azurerm_public_ip" "appgw" {
   location            = local.location
   allocation_method   = "Static"
   sku                 = "Standard"
+  tags = {
+    yor_trace = "c92b196d-d4e2-4649-bff4-32838783b4bb"
+  }
 }
 
 resource "azurerm_application_gateway" "network" {
